@@ -4,7 +4,7 @@ import dataclasses
 import logging
 import threading
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
-
+import os
 import torch
 
 import sglang.srt.sampling.penaltylib as penaltylib
@@ -59,7 +59,10 @@ class SamplingBatchInfo:
     @classmethod
     def from_schedule_batch(cls, batch: ScheduleBatch, vocab_size: int):
         reqs = batch.reqs
-        device = get_device()
+        device = get_device() 
+        if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
+            if "hpu" in device:
+                device = "cpu" 
 
         temperatures = (
             torch.tensor(
@@ -307,6 +310,7 @@ class SamplingBatchInfo:
         ]:
             self_val = getattr(self, item, None)
             other_val = getattr(other, item, None)
+            # print("concate 1", self_val.shape, other_val.shape, self_val.device, self_val.dtype, other_val.device, other_val.dtype)
             setattr(self, item, torch.cat([self_val, other_val]))
 
         self.is_all_greedy |= other.is_all_greedy

@@ -596,6 +596,31 @@ def download_and_cache_file(url: str, filename: Optional[str] = None):
 
     return filename
 
+def is_valid_sequence(
+    prompt_len: int,
+    output_len: int,
+    min_len: int = 4,
+    max_prompt_len: int = 1024,
+    max_total_len: int = 2048,
+    skip_min_output_len_check: bool = False,
+) -> bool:
+    """
+    Validate a sequence based on prompt and output lengths.
+
+    Default pruning criteria are copied from the original `sample_hf_requests`
+    and `sample_sharegpt_requests` functions in benchmark_serving.py, as well as
+    from `sample_requests` in benchmark_throughput.py.
+    """
+    # Check for invalid conditions
+    prompt_too_short = prompt_len < min_len
+    output_too_short = (not skip_min_output_len_check) and (output_len
+                                                            < min_len)
+    prompt_too_long = prompt_len > max_prompt_len
+    combined_too_long = (prompt_len + output_len) > max_total_len
+
+    # Return True if none of the invalid conditions are met
+    return not (prompt_too_short or output_too_short or prompt_too_long
+                or combined_too_long)
 
 def sample_sharegpt_requests(
     dataset_path: str,
@@ -665,19 +690,25 @@ def sample_sharegpt_requests(
         output_len = (
             len(completion_token_ids) if fixed_output_len is None else fixed_output_len
         )
-
-        if prompt_len < 2 or output_len < 2:
-            # Prune too short sequences.
+        
+        if not is_valid_sequence(prompt_len,
+                                output_len,
+                                skip_min_output_len_check=fixed_output_len
+                                is not None):
             continue
 
-        if context_len and prompt_len + output_len > context_len:
-            # Prune too long sequences.
-            continue
+        # if prompt_len < 2 or output_len < 2:
+        #     # Prune too short sequences.
+        #     continue
+
+        # if context_len and prompt_len + output_len > context_len:
+        #     # Prune too long sequences.
+        #     continue
 
         filtered_dataset.append((prompt, prompt_len, output_len))
 
-    print(f"#Input tokens: {np.sum([x[1] for x in filtered_dataset])}")
-    print(f"#Output tokens: {np.sum([x[2] for x in filtered_dataset])}")
+    print(f"#Input tokens (sharegpt): {np.sum([x[1] for x in filtered_dataset])}")
+    print(f"#Output tokens (sharegpt): {np.sum([x[2] for x in filtered_dataset])}")
     return filtered_dataset
 
 
@@ -1020,6 +1051,7 @@ async def benchmark(
     )
 
     # Run warmup requests
+    '''
     warmup_tasks = []
     for _ in range(warmup_requests):
         warmup_tasks.append(
@@ -1038,7 +1070,7 @@ async def benchmark(
         print(
             f"Warmup completed with {args.warmup_requests} sequences. Starting main benchmark run..."
         )
-
+    '''
     # Flush cache
     if ("sglang" in backend and _get_bool_env_var("SGLANG_IS_IN_CI")) or flush_cache:
         requests.post(base_url + "/flush_cache", headers=get_auth_headers())
@@ -1057,6 +1089,7 @@ async def benchmark(
     pbar = None if disable_tqdm else tqdm(total=len(input_requests))
 
     # Run all requests
+    print("Run all requests")
     benchmark_start_time = time.perf_counter()
     tasks: List[asyncio.Task] = []
     async for request in get_request(input_requests, request_rate):
@@ -1082,6 +1115,7 @@ async def benchmark(
             )
         )
     outputs: List[RequestFuncOutput] = await asyncio.gather(*tasks)
+    print("Run all requests done")
 
     # Stop profiler
     if profile:
@@ -1090,22 +1124,26 @@ async def benchmark(
         if profile_output.success:
             print("Profiler stopped")
 
+    print("pbar close")
     if pbar is not None:
         pbar.close()
 
-    if "sglang" in backend:
-        server_info = requests.get(base_url + "/get_server_info")
-        if pd_seperated:
-            accept_length = server_info.json()["decode"][0].get(
-                "avg_spec_accept_length", None
-            )
-        else:
-            accept_length = server_info.json().get("avg_spec_accept_length", None)
-    else:
-        accept_length = None
-
+    print("pbar close done")
+    # if "sglang" in backend:
+    #     server_info = requests.get(base_url + "/get_server_info")
+    #     if pd_seperated:
+    #         accept_length = server_info.json()["decode"][0].get(
+    #             "avg_spec_accept_length", None
+    #         )
+    #     else:
+    #         accept_length = server_info.json().get("avg_spec_accept_length", None)
+    # else:
+    accept_length = None
+    print("accept_length")
+    
     # Compute metrics and print results
     benchmark_duration = time.perf_counter() - benchmark_start_time
+    print("start calculate_metrics")
     metrics, output_lens = calculate_metrics(
         input_requests=input_requests,
         outputs=outputs,
@@ -1113,6 +1151,7 @@ async def benchmark(
         tokenizer=tokenizer,
         backend=backend,
     )
+    print("stop calculate_metrics")
 
     print("\n{s:{c}^{n}}".format(s=" Serving Benchmark Result ", n=50, c="="))
     print("{:<40} {:<10}".format("Backend:", backend))

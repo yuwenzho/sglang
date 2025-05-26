@@ -289,10 +289,22 @@ if _is_hpu:
     def to_hpu_and_pad_1d(tensor, pad_len, pad_value=0):
         return torch.nn.functional.pad(tensor.to("hpu"), (0, pad_len), value=pad_value)
 
+    def to_hpu_and_pad_1d_v2(tensor, padded_len, seq_len):
+        tensor_padded = torch.zeros(padded_len, dtype=tensor.dtype, device='cpu')
+        tensor_padded[:seq_len] = torch.tensor(tensor, device='cpu')
+        return tensor_padded
+
     def compute_hpu_attn_bias_decode(page_size, block_usage, dtype):
-        mask = torch.arange(0, page_size, device="hpu", dtype=torch.int32).unsqueeze(0)
-        mask = mask >= block_usage.to("hpu").unsqueeze(-1)
-        attn_bias = (
-            torch.zeros_like(mask, dtype=dtype).masked_fill_(mask, -math.inf).clone()
-        )
+        if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
+            mask = torch.arange(0, page_size, device="cpu", dtype=torch.int32).unsqueeze(0)
+            mask = mask >= block_usage.to("cpu").unsqueeze(-1)
+            attn_bias = (
+                torch.zeros_like(mask, dtype=dtype).masked_fill_(mask, -math.inf).clone()
+            )
+        else:
+            mask = torch.arange(0, page_size, device="hpu", dtype=torch.int32).unsqueeze(0)
+            mask = mask >= block_usage.to("hpu").unsqueeze(-1)
+            attn_bias = (
+                torch.zeros_like(mask, dtype=dtype).masked_fill_(mask, -math.inf).clone()
+            )
         return attn_bias

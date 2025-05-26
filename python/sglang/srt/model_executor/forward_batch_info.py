@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from enum import IntEnum, auto
 from typing import TYPE_CHECKING, List, Optional, Union
 
+import os
 import torch
 import triton
 import triton.language as tl
@@ -266,7 +267,10 @@ class ForwardBatch:
         batch: ModelWorkerBatch,
         model_runner: ModelRunner,
     ):
-        device = model_runner.device
+        if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
+            device = model_runner.device if model_runner.device != "hpu" else "cpu"
+        else:
+            device = model_runner.device
         extend_input_logprob_token_ids_gpu = None
         if batch.extend_input_logprob_token_ids is not None:
             extend_input_logprob_token_ids_gpu = (

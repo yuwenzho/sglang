@@ -19,6 +19,7 @@ import signal
 import threading
 from queue import Queue
 from typing import Optional
+import os
 
 import psutil
 import torch
@@ -40,6 +41,7 @@ from sglang.srt.utils import (
     is_hpu,
 )
 from sglang.utils import get_exception_traceback
+from sglang.srt.model_executor.hpu_graph_runner import track_graph_compile
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +133,17 @@ class TpModelWorkerClient:
     def forward_thread_func_(self):
         batch_pt = 0
         batch_lists = [None] * 2
+        idx = 1
+        
+        profiling = os.getenv("ENABLE_PROFILING", "0")
+        if profiling == 1:
+            from torch import profiler
+            print("=== Initializing profiler ====")
+            lprofiler = profiler.profile(
+                schedule=profiler.schedule(wait=0, warmup=71, active=4, repeat=1),
+                activities=[profiler.ProfilerActivity.CPU, profiler.ProfilerActivity.HPU],
+                on_trace_ready=profiler.tensorboard_trace_handler('vllm_logs', use_gzip=True), with_stack=True, with_modules=False, record_shapes=False, profile_memory=False)
+            lprofiler.start()
 
         while True:
             model_worker_batch, future_token_ids_ct = self.input_queue.get()
@@ -151,15 +164,26 @@ class TpModelWorkerClient:
             resolve_future_token_ids(input_ids, self.future_token_ids_map)
 
             # Run forward
-            logits_output, next_token_ids = self.worker.forward_batch_generation(
-                model_worker_batch
-            )
+            print("start forward_batch_generation ", idx , " ", end="")
+            idx += 1
+            with track_graph_compile("===forward_thread_func_==="):
+                logits_output, next_token_ids = self.worker.forward_batch_generation(
+                    model_worker_batch
+                )
+            if profiling == 1:
+                lprofiler.step()
 
             # Update the future token ids map
-            bs = len(model_worker_batch.seq_lens)
-            self.future_token_ids_map[
-                future_token_ids_ct + 1 : future_token_ids_ct + bs + 1
-            ] = next_token_ids
+            if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
+                bs = len(model_worker_batch.seq_lens)
+                self.future_token_ids_map[
+                    future_token_ids_ct + 1 : future_token_ids_ct + bs + 1
+                ] = next_token_ids[:bs]
+            else:
+                bs = len(model_worker_batch.seq_lens)
+                self.future_token_ids_map[
+                    future_token_ids_ct + 1 : future_token_ids_ct + bs + 1
+                ] = next_token_ids
 
             # Copy results to the CPU
             if model_worker_batch.return_logprob:
@@ -182,6 +206,9 @@ class TpModelWorkerClient:
             copy_done.record()
 
             self.output_queue.put((copy_done, logits_output, next_token_ids))
+        
+        if profiling == 1:
+            lprofiler.stop()
 
     def resolve_last_batch_result(self, launch_done: Optional[threading.Event] = None):
         """
