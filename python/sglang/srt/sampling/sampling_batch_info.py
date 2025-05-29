@@ -60,9 +60,8 @@ class SamplingBatchInfo:
     def from_schedule_batch(cls, batch: ScheduleBatch, vocab_size: int):
         reqs = batch.reqs
         device = get_device() 
-        if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
-            if "hpu" in device:
-                device = "cpu" 
+        if "hpu" in device:
+            device = "cpu" 
 
         temperatures = (
             torch.tensor(

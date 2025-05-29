@@ -295,16 +295,9 @@ if _is_hpu:
         return tensor_padded
 
     def compute_hpu_attn_bias_decode(page_size, block_usage, dtype):
-        if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
-            mask = torch.arange(0, page_size, device="cpu", dtype=torch.int32).unsqueeze(0)
-            mask = mask >= block_usage.to("cpu").unsqueeze(-1)
-            attn_bias = (
-                torch.zeros_like(mask, dtype=dtype).masked_fill_(mask, -math.inf).clone()
-            )
-        else:
-            mask = torch.arange(0, page_size, device="hpu", dtype=torch.int32).unsqueeze(0)
-            mask = mask >= block_usage.to("hpu").unsqueeze(-1)
-            attn_bias = (
-                torch.zeros_like(mask, dtype=dtype).masked_fill_(mask, -math.inf).clone()
-            )
+        mask = torch.arange(0, page_size, device="cpu", dtype=torch.int32).unsqueeze(0)
+        mask = mask >= block_usage.to("cpu").unsqueeze(-1)
+        attn_bias = (
+            torch.zeros_like(mask, dtype=dtype).masked_fill_(mask, -math.inf).clone()
+        )
         return attn_bias

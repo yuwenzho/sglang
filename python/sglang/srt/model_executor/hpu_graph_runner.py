@@ -539,93 +539,44 @@ class HPUGraphRunner:
     def capture_prefill(self, seq_len):
         logger.info(f"Capture prefill with seq_len: {seq_len}")
         
-        if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
-            model_worker_batch = create_hpu_dummy_batch_prefill_v2(
-                seq_len, self.model_runner.model_config.vocab_size)
-            for i in range(3):
-                self.forward_batch_generation(model_worker_batch)
-        else:
-            forward_batch = create_hpu_dummy_batch_prefill(
-                seq_len,
-                self.model_runner.dtype,
-                self.model_runner.token_to_kv_pool_allocator.page_size,
-                self.model_runner.server_args.max_running_requests,
-                self.model_runner.attn_backend,
-                self.model_runner.token_to_kv_pool,
-            )
-            self.model_runner.attn_backend.init_forward_metadata(forward_batch)
-            for i in range(3):
-                self.model.forward(
-                    forward_batch.input_ids, forward_batch.positions, forward_batch
-                )
-            
+        model_worker_batch = create_hpu_dummy_batch_prefill_v2(
+            seq_len, self.model_runner.model_config.vocab_size)
+        for i in range(3):
+            self.forward_batch_generation(model_worker_batch)
 
     def capture_decode(self, batch_size, block_num):
         logger.info(
             f"Capture decode with batch_size: {batch_size} and block_num: {block_num}"
         )
         
-        if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
-            model_worker_batch = create_hpu_dummy_batch_decode_v2(
-                batch_size, 
-                block_num,
-                self.model_runner.dtype,
-                self.model_runner.model_config.vocab_size
-            )
-            for i in range(3):
-                self.forward_batch_generation(model_worker_batch)
-        else:
-            page_size = self.model_runner.token_to_kv_pool_allocator.page_size
-            forward_batch = create_hpu_dummy_batch_decode(
-                batch_size,
-                block_num,
-                self.model_runner.dtype,
-                page_size,
-                self.model_runner.attn_backend,
-                self.model_runner.token_to_kv_pool,
-            )
-            self.model_runner.attn_backend.init_forward_metadata(forward_batch)
-            for i in range(3):
-                self.model.forward(
-                    forward_batch.input_ids, forward_batch.positions, forward_batch
-                )
-        
+        model_worker_batch = create_hpu_dummy_batch_decode_v2(
+            batch_size, 
+            block_num,
+            self.model_runner.dtype,
+            self.model_runner.model_config.vocab_size
+        )
+        for i in range(3):
+            self.forward_batch_generation(model_worker_batch)
+
 
     def _forward(self, forward_batch: ForwardBatch):
         import habana_frameworks.torch as htorch
 
-        if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
-            # print("REMOVE_GRAPH_COMPILE")
-            forward_batch_hpu = create_hpu_forward_batch_v2(forward_batch, self.model_runner)
-        else:
-            # print("NO REMOVE_GRAPH_COMPILE")
-            forward_batch_hpu = create_hpu_forward_batch(forward_batch, self.model_runner)
+        forward_batch_hpu = create_hpu_forward_batch_v2(forward_batch, self.model_runner)
         self._check_config(forward_batch_hpu)
         results = self.model.forward(
             forward_batch_hpu.input_ids, forward_batch_hpu.positions, forward_batch_hpu
         )
         htorch.core.mark_step()
         if isinstance(results, LogitsProcessorOutput):
-            if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
-                output = LogitsProcessorOutput(
-                next_token_logits=results.next_token_logits,
-                hidden_states=(
-                    results.hidden_states
-                    if results.hidden_states is not None
-                    else None
-                    ),
-                )
-            else:
-                output = LogitsProcessorOutput(
-                    next_token_logits=results.next_token_logits.clone()[
-                        : forward_batch.batch_size
-                    ],
-                    hidden_states=(
-                        results.hidden_states.clone()[: forward_batch.batch_size]
-                        if results.hidden_states is not None
-                        else None
-                    ),
-                )
+            output = LogitsProcessorOutput(
+            next_token_logits=results.next_token_logits,
+            hidden_states=(
+                results.hidden_states
+                if results.hidden_states is not None
+                else None
+                ),
+            )
         elif isinstance(results, EmbeddingPoolerOutput):
             output = EmbeddingPoolerOutput(
                 embeddings=results.embeddings.clone()[: forward_batch.batch_size]

@@ -41,7 +41,6 @@ from sglang.srt.utils import (
     is_hpu,
 )
 from sglang.utils import get_exception_traceback
-from sglang.srt.model_executor.hpu_graph_runner import track_graph_compile
 
 logger = logging.getLogger(__name__)
 
@@ -166,24 +165,17 @@ class TpModelWorkerClient:
             # Run forward
             print("start forward_batch_generation ", idx , " ", end="")
             idx += 1
-            with track_graph_compile("===forward_thread_func_==="):
-                logits_output, next_token_ids = self.worker.forward_batch_generation(
-                    model_worker_batch
-                )
+            logits_output, next_token_ids = self.worker.forward_batch_generation(
+                model_worker_batch
+            )
             if profiling == 1:
                 lprofiler.step()
 
             # Update the future token ids map
-            if os.getenv("REMOVE_GRAPH_COMPILE", "0"):
-                bs = len(model_worker_batch.seq_lens)
-                self.future_token_ids_map[
-                    future_token_ids_ct + 1 : future_token_ids_ct + bs + 1
-                ] = next_token_ids[:bs]
-            else:
-                bs = len(model_worker_batch.seq_lens)
-                self.future_token_ids_map[
-                    future_token_ids_ct + 1 : future_token_ids_ct + bs + 1
-                ] = next_token_ids
+            bs = len(model_worker_batch.seq_lens)
+            self.future_token_ids_map[
+                future_token_ids_ct + 1 : future_token_ids_ct + bs + 1
+            ] = next_token_ids[:bs]
 
             # Copy results to the CPU
             if model_worker_batch.return_logprob:
